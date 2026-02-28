@@ -1,26 +1,47 @@
-//https://deepbluembedded.com/esp32-lcd-display-16x2-without-i2c-arduino/
-
 #include <LiquidCrystal.h>
+#include <Arduino.h>
+#include <WiFi.h>
+#include <ESP_Mail_Client.h>
  
 // Create An LCD Object. Signals: [ RS, EN, D4, D5, D6, D7 ]
 LiquidCrystal lcd(23, 22, 21, 19, 18, 5);
 
+#define buttonPin 27
+#define lightPin 33
 #define thermPin 32
 #define SERIES_RESISTOR 10000.0
 #define NOMINAL_RESISTANCE 10000.0
 #define NOMINAL_TEMPERATURE 25.0
 #define B_COEFFICIENT 3950.0
+#define MAX_DAYS 10
 
 float highTemp;
 float lowTemp;
 float aveTemp;
 
-#define lightPin 33
-
 int lightVal = 0;
-int lightSecs = 0;
+unsigned long lightSecs = 0;
 int mins = 0;
 int hrs = 0;
+
+unsigned long darkSecs = 0;
+bool isDay;
+
+unsigned long lastTick = 0;
+const unsigned long interval = 1000;  // 1 second
+
+
+struct DayStats{
+  float lowTemp;
+  float highTemp;
+  float aveTemp;
+  unsigned long lightSecs;
+};
+//obviously 7 days in a week, but I'm forgetful and might need a couple extra
+DayStats week[MAX_DAYS];
+// fighter of the night index (ah ahhhh)
+int dayIndex = 0;
+int dayCount = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -40,36 +61,94 @@ void setup() {
 }
  
 void loop() {
+  unsigned long now = millis();
 
-  float tempTemp = getTemp();
+  if (digitalRead(buttonPin) == HIGH) printLog();
 
-  if (tempTemp < lowTemp) lowTemp = tempTemp;
-  if (tempTemp > highTemp) highTemp = tempTemp;
+  if(now - lastTick >= interval){
+    lastTick += interval;  // keeps timing stable
 
-  aveTemp = (lowTemp + highTemp) / 2;
+    float tempTemp = getTemp();
 
-  lightVal = analogRead(lightPin);
-  Serial.println(lightVal);
+    if(tempTemp < lowTemp) lowTemp = tempTemp;
+    if(tempTemp > highTemp) highTemp = tempTemp;
 
-  if (lightVal > 1000){
-    lightSecs++;
+    aveTemp = (lowTemp + highTemp) / 2;
+
+    lightVal = analogRead(lightPin);
+
+    if(lightVal > 1000){
+      isDay = true;
+      darkSecs = 0;
+      lightSecs++;
+    } else {
+      darkSecs++;
+    }
+    if((darkSecs > 5) && isDay){
+      isDay = false;
+      Serial.println("End of day, storing variables...");
+      storeDay();
+      Serial.println("Resetting counters...");
+      lowTemp = getTemp();
+      highTemp = getTemp();
+      lightSecs = 0;
+      mins = 0;
+      hrs = 0;
+      Serial.print("Day: ");
+      Serial.print(dayIndex);
+      Serial.print(" stored sucessfully. Light exposure: ");
+      Serial.print(week[dayIndex-1].lightSecs);
+      Serial.print(" Average temp: ");
+      Serial.println(week[dayIndex-1].aveTemp);
+    }
+
+//    Serial.print("low Temp: ");
+//    Serial.println(lowTemp);
+
+//    Serial.print("high temp: ");
+//    Serial.println(highTemp);
+
+ //   Serial.print("ave temp: ");
+//    Serial.println(aveTemp);
+
+    Serial.print("Light value: ");
+    Serial.println(lightVal);
+//    Serial.print("light Secs: ");
+//    Serial.println(lightSecs);
+    Serial.print("dark secs: ");
+    Serial.println(darkSecs);
+
+    lcd.setCursor(10, 0);
+    lcd.print(aveTemp);
+
+    printTime(lightSecs);
   }
+}
 
-  Serial.print("low Temp: ");
-  Serial.println(lowTemp);
+void storeDay(){
+  week[dayIndex].lowTemp = lowTemp;
+  week[dayIndex].highTemp = highTemp;
+  week[dayIndex].aveTemp = aveTemp;
+  week[dayIndex].lightSecs = lightSecs;
 
-  Serial.print("high temp: ");
-  Serial.println(highTemp);
+  dayIndex = (dayIndex + 1) % MAX_DAYS;
+  if (dayCount < MAX_DAYS) dayCount++;
+}
 
-  Serial.print("ave temp: ");
-  Serial.println(aveTemp);
+void resetWeek(){
+  dayIndex = 0;
+  dayCount = 0;
+}
 
-  lcd.setCursor(10, 0);
-  lcd.print(aveTemp);
-  lcd.print("");
-
-  printTime(lightSecs);
-
+void printLog(){
+  for(int i = 0; i < dayCount; i++){
+      Serial.print("Day ");
+      Serial.print(i);
+      Serial.print(": Light exposure: ");
+      Serial.print(week[i].lightSecs);
+      Serial.print(" Average temp: ");
+      Serial.println(week[i].aveTemp);
+  }
   delay(1000);
 }
 
