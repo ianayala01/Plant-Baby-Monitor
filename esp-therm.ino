@@ -1,7 +1,8 @@
+#include <ESP_Mail_Client.h>
+
 #include <LiquidCrystal.h>
 #include <Arduino.h>
 #include <WiFi.h>
-#include <ESP_Mail_Client.h>
  
 // Create An LCD Object. Signals: [ RS, EN, D4, D5, D6, D7 ]
 LiquidCrystal lcd(23, 22, 21, 19, 18, 5);
@@ -14,6 +15,18 @@ LiquidCrystal lcd(23, 22, 21, 19, 18, 5);
 #define NOMINAL_TEMPERATURE 25.0
 #define B_COEFFICIENT 3950.0
 #define MAX_DAYS 10
+
+//Wifi settings, push to GitHub THEN update to actual info
+#define WIFI_SSID "MiFi"
+#define WIFI_PASSWORD "MiFi pw"
+
+#define SMTP_HOST "email"
+#define SMTP_PORT 645
+#define AUTHOR_EMAIL "yingyangemail@mail.com"
+#define AUTHOR_PASSWORD "my password"
+#define RECIPIENT_EMAIL "recipient email@mail.com"
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 float highTemp;
 float lowTemp;
@@ -30,6 +43,7 @@ bool isDay;
 unsigned long lastTick = 0;
 const unsigned long interval = 1000;  // 1 second
 
+SMTPSession smtp;
 
 struct DayStats{
   float lowTemp;
@@ -46,6 +60,17 @@ int dayCount = 0;
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  pinMode(buttonPin, INPUT);
+
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+    Serial.println("\nWiFi connected!");
+
   lcd.begin(16, 2);
   delay(50);
 
@@ -63,7 +88,7 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  if (digitalRead(buttonPin) == HIGH) printLog();
+  if (digitalRead(buttonPin) == HIGH) sendLog();
 
   if(now - lastTick >= interval){
     lastTick += interval;  // keeps timing stable
@@ -140,15 +165,61 @@ void resetWeek(){
   dayCount = 0;
 }
 
-void printLog(){
-  for(int i = 0; i < dayCount; i++){
-      Serial.print("Day ");
-      Serial.print(i);
-      Serial.print(": Light exposure: ");
-      Serial.print(week[i].lightSecs);
-      Serial.print(" Average temp: ");
-      Serial.println(week[i].aveTemp);
-  }
+void smtpCallback(SMTP_Status status){
+    Serial.println(status.info());
+    if (status.success()) {
+        Serial.println("Message sent successfully!");
+        smtp.sendingResult.clear();
+    }
+}
+
+void sendLog(){
+  // Configure SMTP session
+    Session_Config config;
+    config.server.host_name = SMTP_HOST;
+    config.server.port = SMTP_PORT;
+    config.login.email = AUTHOR_EMAIL;
+    config.login.password = AUTHOR_PASSWORD;
+    config.login.user_domain = "";
+    config.time.ntp_server = F("pool.ntp.org,time.nist.gov");
+    config.time.gmt_offset = 1;
+    config.time.day_light_offset = 0;
+
+    MailClient.networkReconnect(true);
+    smtp.debug(1);
+    smtp.callback(smtpCallback);
+
+    if (!smtp.connect(&config)) {
+        Serial.println("SMTP connection failed");
+        return;
+    }
+
+    // Prepare the message
+    SMTP_Message message;
+    message.sender.name = F("ESP Plant Tracker");
+    message.sender.email = AUTHOR_EMAIL;
+    message.subject = F("Weekly Plant Stats");
+    message.addRecipient(F("Recipient"), RECIPIENT_EMAIL);
+
+    // Build email body from week array
+    String body = "";
+    for (int i = 0; i < dayCount; i++) {
+        body += "Day " + String(i + 1) + ": Low " + String(week[i].lowTemp) +
+                ", High " + String(week[i].highTemp) +
+                ", Avg " + String(week[i].aveTemp) +
+                "°C, LightSecs " + String(week[i].lightSecs) + "\n";
+    }
+    message.text.content = body.c_str();
+    message.text.charSet = "us-ascii";
+    message.text.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
+
+    // Send email
+    if (!MailClient.sendMail(&smtp, &message)) {
+        Serial.println("Email sending failed!");
+    } else {
+        Serial.println("Email sent!");
+    }
+
   delay(1000);
 }
 
