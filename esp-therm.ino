@@ -3,6 +3,7 @@
 #include <LiquidCrystal.h>
 #include <Arduino.h>
 #include <WiFi.h>
+#include "time.h"
  
 // Create An LCD Object. Signals: [ RS, EN, D4, D5, D6, D7 ]
 LiquidCrystal lcd(23, 22, 21, 19, 18, 5);
@@ -16,17 +17,21 @@ LiquidCrystal lcd(23, 22, 21, 19, 18, 5);
 #define B_COEFFICIENT 3950.0
 #define MAX_DAYS 10
 
-//Wifi settings, push to GitHub THEN update to actual info
-#define WIFI_SSID "MiFi"
-#define WIFI_PASSWORD "MiFi pw"
+//Wifi settings, remember not to push this by accident
+#define WIFI_SSID "<SSID>"
+#define WIFI_PASSWORD "<WiFi password>"
 
-#define SMTP_HOST "email"
-#define SMTP_PORT 645
-#define AUTHOR_EMAIL "yingyangemail@mail.com"
-#define AUTHOR_PASSWORD "my password"
-#define RECIPIENT_EMAIL "recipient email@mail.com"
+#define SMTP_HOST "smtp.gmail.com"
+#define SMTP_PORT 465
+#define AUTHOR_EMAIL "<sender email>"
+#define AUTHOR_PASSWORD "<app code, not literal pw of sender>"
+#define RECIPIENT_EMAIL "<recipient email>"
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -28800;
+const int daylightOffset_sec = 3600;
 
 float highTemp;
 float lowTemp;
@@ -46,6 +51,7 @@ const unsigned long interval = 1000;  // 1 second
 SMTPSession smtp;
 
 struct DayStats{
+  String date;
   float lowTemp;
   float highTemp;
   float aveTemp;
@@ -61,22 +67,30 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  lcd.begin(16, 2);
+  delay(50);
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   pinMode(buttonPin, INPUT);
 
   Serial.print("Connecting to WiFi");
+  lcd.setCursor(0, 0);
+  lcd.print("Connecting to");
+  lcd.setCursor(0, 1);
+  lcd.print("Wifi");
+
   while (WiFi.status() != WL_CONNECTED) {
+    lcd.print(".");
     Serial.print(".");
     delay(500);
   }
-    Serial.println("\nWiFi connected!");
-
-  lcd.begin(16, 2);
-  delay(50);
-
+  Serial.println("\nWiFi connected!");
+  lcd.print("Connected! :D");
+  delay(100);
+  
   // Clears The LCD Display
   lcd.clear();
- 
+  lcd.setCursor(0, 0);
   lcd.print("Ave Temp:");
   lcd.setCursor(0, 1);
   lcd.print("Light:");
@@ -87,6 +101,9 @@ void setup() {
  
 void loop() {
   unsigned long now = millis();
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  formatLocalTime();
 
   if (digitalRead(buttonPin) == HIGH) sendLog();
 
@@ -109,7 +126,7 @@ void loop() {
     } else {
       darkSecs++;
     }
-    if((darkSecs > 5) && isDay){
+    if((darkSecs > 7200) && isDay){
       isDay = false;
       Serial.println("End of day, storing variables...");
       storeDay();
@@ -133,8 +150,8 @@ void loop() {
 //    Serial.print("high temp: ");
 //    Serial.println(highTemp);
 
- //   Serial.print("ave temp: ");
-//    Serial.println(aveTemp);
+    Serial.print("ave temp: ");
+    Serial.println(aveTemp);
 
     Serial.print("Light value: ");
     Serial.println(lightVal);
@@ -155,6 +172,7 @@ void storeDay(){
   week[dayIndex].highTemp = highTemp;
   week[dayIndex].aveTemp = aveTemp;
   week[dayIndex].lightSecs = lightSecs;
+  week[dayIndex].date = formatLocalTime();
 
   dayIndex = (dayIndex + 1) % MAX_DAYS;
   if (dayCount < MAX_DAYS) dayCount++;
@@ -174,6 +192,7 @@ void smtpCallback(SMTP_Status status){
 }
 
 void sendLog(){
+  storeDay();
   // Configure SMTP session
     Session_Config config;
     config.server.host_name = SMTP_HOST;
@@ -196,7 +215,7 @@ void sendLog(){
 
     // Prepare the message
     SMTP_Message message;
-    message.sender.name = F("ESP Plant Tracker");
+    message.sender.name = F("Daddy Silvanus");
     message.sender.email = AUTHOR_EMAIL;
     message.subject = F("Weekly Plant Stats");
     message.addRecipient(F("Recipient"), RECIPIENT_EMAIL);
@@ -204,10 +223,11 @@ void sendLog(){
     // Build email body from week array
     String body = "";
     for (int i = 0; i < dayCount; i++) {
-        body += "Day " + String(i + 1) + ": Low " + String(week[i].lowTemp) +
-                ", High " + String(week[i].highTemp) +
-                ", Avg " + String(week[i].aveTemp) +
-                "°C, LightSecs " + String(week[i].lightSecs) + "\n";
+        float lightHours = week[i].lightSecs / 3600.0;
+        body += String(week[i].date) + ": Low " + String(week[i].lowTemp) +
+                "°F, High " + String(week[i].highTemp) +
+                "°F, Avg " + String(week[i].aveTemp) +
+                "°F, Light exposure: " + String(lightHours, 1) + "hrs\n";
     }
     message.text.content = body.c_str();
     message.text.charSet = "us-ascii";
@@ -220,6 +240,7 @@ void sendLog(){
         Serial.println("Email sent!");
     }
 
+  resetWeek();
   delay(1000);
 }
 
@@ -264,4 +285,16 @@ float getTemp(){
   //return temperature for Celscius
   //return freedom for freedom units
   return freedom;
+}
+
+String formatLocalTime(){
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return "<missing>";
+  }
+  char buf[80];
+  strftime(buf, sizeof(buf), "%A: %d %B %Y", &timeinfo);
+  //Serial.println(buf);
+  return buf;
 }
