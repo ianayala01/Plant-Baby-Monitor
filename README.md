@@ -5,4 +5,4 @@ Individual days are tracked based on a light threshold that has been calibrated 
 at the press of a button, these stats are formatted and sent over email with the actual dates on which the stats were collected.
 
 # future updates:
-- switch to using preferences.h for persistent credential storage.
+- switch to using preferences.h for persistent credential and statistics storage.
